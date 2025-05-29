@@ -299,15 +299,15 @@ class AdminFunctions:
 
         # Nút Sửa
         ttk.Button(button_panel_frame, text="Sửa thông tin người dùng", 
-                   command=lambda: self._edit_user_info_dialog(tree, load_users)).pack(pady=5, fill=tk.X)
+                   command=lambda: self._edit_user_info_dialog(self.user_tree, load_users)).pack(pady=5, fill=tk.X)
         
         # Nút Xóa
         ttk.Button(button_panel_frame, text="Xóa người dùng đã chọn", 
-                   command=lambda: self._delete_user_from_system(tree, load_users)).pack(pady=5, fill=tk.X)
+                   command=lambda: self._delete_user_from_system(self.user_tree, load_users)).pack(pady=5, fill=tk.X)
         
         # Nút Xem ảnh
         ttk.Button(button_panel_frame, text="Xem ảnh người dùng", 
-                   command=lambda: self._view_user_images_dialog(tree)).pack(pady=5, fill=tk.X)
+                   command=lambda: self._view_user_images_dialog(self.user_tree)).pack(pady=5, fill=tk.X)
         
         btn_view_user_report = ttk.Button(button_panel_frame, text="Báo cáo người dùng", command=self._view_user_report)
         btn_view_user_report.pack(pady=5, fill=tk.X) # Dùng fill=tk.X để đồng bộ với các nút khác
@@ -580,83 +580,6 @@ class AdminFunctions:
                     row_count += 2
             except Exception as e:
                 print(f"Lỗi khi tải hoặc hiển thị ảnh {img_file} từ {img_path}: {e}")
-
-        # Nút đóng cho cửa sổ xem ảnh
-        ttk.Button(image_viewer_dialog, text="Đóng", command=image_viewer_dialog.destroy).pack(pady=10)
-
-        # Cập nhật scroll region sau khi tất cả ảnh được tải
-        frame_in_canvas.update_idletasks()
-        canvas.config(scrollregion=canvas.bbox("all"))
-        selected_item = tree_view.selection()
-        if not selected_item:
-            messagebox.showwarning("Cảnh báo", "Vui lòng chọn một người dùng để xem ảnh.")
-            return
-
-        user_id = tree_view.item(selected_item, 'values')[0]
-        user_name = tree_view.item(selected_item, 'values')[1]
-
-        # Tìm tên thư mục đầy đủ (UserID_Name) từ id_mapping
-        user_folder_name = None
-        for numeric_id, original_id_name in load_id_mapping().items():
-            if original_id_name.startswith(user_id + '_'):
-                user_folder_name = original_id_name
-                break
-        
-        if not user_folder_name:
-            messagebox.showerror("Lỗi", f"Không tìm thấy thư mục ảnh cho người dùng ID: {user_id}.")
-            return
-
-        user_image_path = os.path.join(config.DATASET_PATH, user_folder_name)
-        if not os.path.exists(user_image_path) or not os.listdir(user_image_path):
-            messagebox.showinfo("Thông báo", f"Không có ảnh nào cho người dùng '{user_name}' (ID: {user_id}).")
-            return
-
-        image_files = sorted([f for f in os.listdir(user_image_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
-        if not image_files:
-            messagebox.showinfo("Thông báo", f"Không có ảnh nào cho người dùng '{user_name}' (ID: {user_id}).")
-            return
-
-        image_viewer_dialog = tk.Toplevel(self.master_root)
-        image_viewer_dialog.title(f"Ảnh của: {user_name} (ID: {user_id})")
-        image_viewer_dialog.geometry("800x600") # Kích thước mặc định
-        image_viewer_dialog.transient(self.master_root)
-        image_viewer_dialog.grab_set()
-
-        canvas = tk.Canvas(image_viewer_dialog, bg="white")
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        v_scrollbar = ttk.Scrollbar(image_viewer_dialog, orient="vertical", command=canvas.yview)
-        v_scrollbar.pack(side=tk.RIGHT, fill="y")
-        canvas.configure(yscrollcommand=v_scrollbar.set)
-        
-        # Bắt sự kiện thay đổi kích thước canvas để cập nhật scrollregion
-        canvas.bind('<Configure>', lambda e: canvas.configure(scrollregion = canvas.bbox("all")))
-
-        frame_in_canvas = ttk.Frame(canvas)
-        canvas.create_window((0,0), window=frame_in_canvas, anchor="nw")
-
-        row_count = 0
-        col_count = 0
-        max_cols = 4 # Hiển thị tối đa 4 ảnh mỗi hàng
-        photo_references = [] # Danh sách để giữ tham chiếu đến PhotoImage objects
-
-        for img_file in sorted(image_files): # Sắp xếp để hiển thị theo thứ tự
-            img_path = os.path.join(user_image_path, img_file)
-            try:
-                img = Image.open(img_path)
-                img = img.resize((150, 150), Image.Resampling.LANCZOS) # Resize ảnh nhỏ lại để hiển thị
-                photo = ImageTk.PhotoImage(img)
-                photo_references.append(photo) # Giữ tham chiếu
-
-                label = ttk.Label(frame_in_canvas, image=photo)
-                label.grid(row=row_count, column=col_count, padx=5, pady=5)
-
-                col_count += 1
-                if col_count >= max_cols:
-                    col_count = 0
-                    row_count += 1
-            except Exception as e:
-                print(f"Lỗi khi tải hoặc hiển thị ảnh {img_file}: {e}")
 
         # Nút đóng cho cửa sổ xem ảnh
         ttk.Button(image_viewer_dialog, text="Đóng", command=image_viewer_dialog.destroy).pack(pady=10)
