@@ -7,7 +7,7 @@ import os
 import shutil
 import pandas as pd
 import datetime
-from PIL import Image, ImageTk # <<< THÊM DÒNG NÀY ĐỂ XỬ LÝ ẢNH
+from PIL import Image, ImageTk
 
 import config
 from utils.face_recognizer_utils import (
@@ -16,13 +16,13 @@ from utils.face_recognizer_utils import (
 )
 from database.database_manager import (
     load_attendance, save_attendance, summarize_checkin_checkout,
-    update_user_name_in_attendance # <<< ĐẢM BẢO DÒNG NÀY CÓ Ở ĐÂY
+    update_user_name_in_attendance
 )
 
-import matplotlib.pyplot as plt # <<< THÊM DÒNG NÀY
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk # <<< THÊM DÒNG NÀY
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
-from report_window import ReportWindow 
+from report_window import ReportWindow
 
 class AdminFunctions:
     def __init__(self, master_root, video_label, status_label, result_label, names_dict):
@@ -132,10 +132,86 @@ class AdminFunctions:
 
         attendance_window = tk.Toplevel(self.master_root)
         attendance_window.title("Quản lý Chấm công")
-        attendance_window.geometry("1150x600") 
+        attendance_window.geometry("1150x750") # Tăng chiều cao để chứa bộ lọc và tìm kiếm
         attendance_window.transient(self.master_root)
         attendance_window.grab_set()
 
+        # --- Khu vực Tìm kiếm và Lọc ---
+        filter_frame = ttk.Frame(attendance_window)
+        filter_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
+
+        # Ô tìm kiếm theo tên/mã NV
+        ttk.Label(filter_frame, text="Tìm kiếm (Tên/Mã NV):").pack(side=tk.LEFT, padx=5, pady=2)
+        search_entry = ttk.Entry(filter_frame, width=30)
+        search_entry.pack(side=tk.LEFT, padx=5, pady=2)
+
+        # Bộ lọc theo khoảng thời gian
+        ttk.Label(filter_frame, text="Lọc theo:").pack(side=tk.LEFT, padx=(15, 5), pady=2)
+        
+        time_filter_options = ["Tất cả", "Hôm nay", "Tuần này", "Tháng này", "Tùy chỉnh"]
+        time_filter_var = tk.StringVar(value="Tất cả")
+        time_filter_menu = ttk.Combobox(filter_frame, textvariable=time_filter_var, values=time_filter_options, width=15, state="readonly")
+        time_filter_menu.pack(side=tk.LEFT, padx=5, pady=2)
+
+        # Khung cho tùy chỉnh ngày tháng
+        custom_date_frame = ttk.Frame(filter_frame)
+        
+        ttk.Label(custom_date_frame, text="Từ ngày:").pack(side=tk.LEFT, padx=5, pady=2)
+        from_date_entry = ttk.Entry(custom_date_frame, width=12)
+        from_date_entry.pack(side=tk.LEFT, padx=5, pady=2)
+        ttk.Label(custom_date_frame, text="Đến ngày:").pack(side=tk.LEFT, padx=5, pady=2)
+        to_date_entry = ttk.Entry(custom_date_frame, width=12)
+        to_date_entry.pack(side=tk.LEFT, padx=5, pady=2)
+
+        def toggle_custom_date_entries(*args):
+            if time_filter_var.get() == "Tùy chỉnh":
+                custom_date_frame.pack(side=tk.LEFT, padx=5, pady=2)
+            else:
+                custom_date_frame.pack_forget()
+
+        time_filter_var.trace_add("write", toggle_custom_date_entries)
+
+        def apply_filters():
+            search_term = search_entry.get().strip().lower()
+            filter_type = time_filter_var.get()
+            
+            start_date = None
+            end_date = None
+
+            if filter_type == "Hôm nay":
+                start_date = datetime.date.today()
+                end_date = datetime.date.today()
+            elif filter_type == "Tuần này":
+                today = datetime.date.today()
+                start_date = today - datetime.timedelta(days=today.weekday()) # Thứ Hai của tuần hiện tại
+                end_date = start_date + datetime.timedelta(days=6) # Chủ Nhật của tuần hiện tại
+            elif filter_type == "Tháng này":
+                today = datetime.date.today()
+                start_date = datetime.date(today.year, today.month, 1)
+                end_date = datetime.date(today.year, today.month + 1, 1) - datetime.timedelta(days=1) if today.month < 12 else datetime.date(today.year, 12, 31)
+            elif filter_type == "Tùy chỉnh":
+                try:
+                    from_date_str = from_date_entry.get()
+                    to_date_str = to_date_entry.get()
+                    if from_date_str:
+                        start_date = datetime.datetime.strptime(from_date_str, '%Y-%m-%d').date()
+                    if to_date_str:
+                        end_date = datetime.datetime.strptime(to_date_str, '%Y-%m-%d').date()
+                    # Đảm bảo end_date không nhỏ hơn start_date
+                    if start_date and end_date and start_date > end_date:
+                        messagebox.showwarning("Cảnh báo", "Ngày kết thúc không được nhỏ hơn ngày bắt đầu.")
+                        return
+                except ValueError:
+                    messagebox.showwarning("Lỗi", "Định dạng ngày không hợp lệ. Vui lòng sử dụng YYYY-MM-DD.")
+                    return
+
+            load_data(search_term, start_date, end_date)
+
+
+        ttk.Button(filter_frame, text="Áp dụng", command=apply_filters).pack(side=tk.LEFT, padx=10, pady=2)
+
+
+        # --- Khung chứa Treeview và thanh cuộn ---
         tree_frame = ttk.Frame(attendance_window)
         tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -162,16 +238,32 @@ class AdminFunctions:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         tree.configure(yscrollcommand=scrollbar.set)
 
-        def load_data():
+        # Hàm load_data được cập nhật để nhận tham số tìm kiếm và lọc
+        def load_data(search_term="", start_date=None, end_date=None):
             for i in tree.get_children():
                 tree.delete(i)
+            
             df = load_attendance()
+            
             if not df.empty:
                 df['Timestamp'] = pd.to_datetime(df['Timestamp'])
                 if 'CheckInTime' in df.columns:
                     df['CheckInTime'] = pd.to_datetime(df['CheckInTime'], errors='coerce')
                 if 'CheckOutTime' in df.columns:
                     df['CheckOutTime'] = pd.to_datetime(df['CheckOutTime'], errors='coerce')
+
+                # Áp dụng tìm kiếm
+                if search_term:
+                    df = df[
+                        df['UserID'].astype(str).str.lower().str.contains(search_term) |
+                        df['Name'].astype(str).str.lower().str.contains(search_term)
+                    ]
+                
+                # Áp dụng lọc theo ngày tháng
+                if start_date:
+                    df = df[df['Timestamp'].dt.date >= start_date]
+                if end_date:
+                    df = df[df['Timestamp'].dt.date <= end_date]
 
                 df = df.sort_values(by=['UserID', 'Timestamp']).reset_index(drop=True)
 
@@ -201,14 +293,15 @@ class AdminFunctions:
                 for row_data in display_data:
                     tree.insert("", tk.END, values=row_data)
         
-        load_data()
+        load_data() # Gọi lần đầu để tải dữ liệu ban đầu
 
         button_panel_frame = ttk.Frame(attendance_window, width=150) 
         button_panel_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
 
-        ttk.Button(button_panel_frame, text="Làm mới", command=load_data).pack(pady=5, fill=tk.X) 
-        ttk.Button(button_panel_frame, text="Xóa bản ghi đã chọn", command=lambda: self._delete_selected_attendance_record(tree, load_data)).pack(pady=5, fill=tk.X)
-        ttk.Button(button_panel_frame, text="Xóa tất cả", command=lambda: self._clear_all_attendance_records(load_data)).pack(pady=5, fill=tk.X)
+        # Nút "Làm mới" giờ sẽ gọi hàm apply_filters để tải lại dữ liệu với các bộ lọc hiện có
+        ttk.Button(button_panel_frame, text="Làm mới", command=apply_filters).pack(pady=5, fill=tk.X) 
+        ttk.Button(button_panel_frame, text="Xóa bản ghi đã chọn", command=lambda: self._delete_selected_attendance_record(tree, apply_filters)).pack(pady=5, fill=tk.X)
+        ttk.Button(button_panel_frame, text="Xóa tất cả", command=lambda: self._clear_all_attendance_records(apply_filters)).pack(pady=5, fill=tk.X)
         ttk.Button(button_panel_frame, text="Đóng", command=attendance_window.destroy).pack(side=tk.BOTTOM, pady=5, fill=tk.X)
 
 
@@ -225,15 +318,17 @@ class AdminFunctions:
             user_id_to_delete = values[1]
 
             df = load_attendance()
-            timestamp_dt = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-
+            # Cần đảm bảo định dạng timestamp khớp với format của file và pd.to_datetime
+            timestamp_dt = pd.to_datetime(timestamp_str) # Sử dụng pd.to_datetime
+            
+            # Lọc chính xác bản ghi cần xóa
             df_filtered = df[(df['UserID'] == user_id_to_delete) & (df['Timestamp'] == timestamp_dt)]
             
             if not df_filtered.empty:
                 df = df.drop(df_filtered.index)
                 save_attendance(df)
                 messagebox.showinfo("Thành công", "Đã xóa bản ghi.")
-                refresh_func()
+                refresh_func() # Gọi hàm refresh_func (apply_filters) để cập nhật
             else:
                 messagebox.showwarning("Lỗi", "Không tìm thấy bản ghi để xóa.")
 
@@ -242,7 +337,7 @@ class AdminFunctions:
             df = pd.DataFrame(columns=['UserID', 'Name', 'Timestamp', 'CheckType', 'CheckInTime', 'CheckOutTime'])
             save_attendance(df)
             messagebox.showinfo("Thành công", "Đã xóa tất cả các bản ghi chấm công.")
-            refresh_func()
+            refresh_func() # Gọi hàm refresh_func (apply_filters) để cập nhật
 
     def show_report_window(self):
         self.stop_capture()
@@ -265,10 +360,8 @@ class AdminFunctions:
 
         columns = ("UserID", "Name")
         
-        # <<< ĐÂY LÀ DÒNG BẠN CẦN THAY ĐỔI ĐỂ GÁN CHO self.user_tree >>>
         self.user_tree = ttk.Treeview(tree_frame, columns=columns, show="headings") 
         
-        # <<< TẤT CẢ CÁC DÒNG SỬ DỤNG 'tree' TRƯỚC ĐÓ BÂY GIỜ PHẢI DÙNG 'self.user_tree' >>>
         self.user_tree.heading("UserID", text="Mã NV")
         self.user_tree.heading("Name", text="Tên")
         self.user_tree.column("UserID", width=150, anchor=tk.CENTER)
@@ -570,7 +663,6 @@ class AdminFunctions:
                 photo_references.append(photo) # Dòng này đã có và cần được giữ
 
                 label = ttk.Label(frame_in_canvas, image=photo)
-                # >>> THÊM DÒNG NÀY VÀO NGAY DƯỚI DÒNG TRÊN <<<
                 label.image = photo # Giữ một tham chiếu trực tiếp trên label
                 label.grid(row=row_count, column=col_count, padx=5, pady=5)
                 
@@ -607,7 +699,6 @@ class AdminFunctions:
 
     def _view_user_report(self):
         selected_item = self.user_tree.selection()
-        # print(f"DEBUG: selected_item = {selected_item}") # Có thể bỏ comment để debug
 
         if not selected_item:
             messagebox.showwarning("Cảnh báo", "Vui lòng chọn một người dùng để xem báo cáo.")
@@ -617,31 +708,23 @@ class AdminFunctions:
         user_id_from_tree = values[0].strip() # Lấy ID từ Treeview và loại bỏ khoảng trắng
         user_name = values[1]
 
-        # print(f"DEBUG: User selected from Treeview: ID='{user_id_from_tree}', Name='{user_name}'") # Có thể bỏ comment để debug
-
         df_attendance = load_attendance() # Tải toàn bộ dữ liệu chấm công
 
         if not df_attendance.empty:
             df_attendance['UserID'] = df_attendance['UserID'].astype(str) # Đảm bảo cột 'UserID' là kiểu chuỗi
-            # print(f"DEBUG: Loaded attendance data. Columns: {df_attendance.columns}") # Có thể bỏ comment để debug
-            # print(f"DEBUG: Unique UserIDs in loaded attendance data (original): {df_attendance['UserID'].unique()}") # Có thể bỏ comment để debug
-
+            
             # Lấy UserID từ Treeview. UserID trong Treeview có dạng "ID_Name" (e.g., SS2_HoSang)
             # Chúng ta cần lấy phần ID số để so sánh với UserID_Extracted trong df_attendance.
             user_id_numeric_for_comparison = user_id_from_tree.split('_')[0].strip().upper()
-            # print(f"DEBUG: User ID from Treeview (numeric for comparison): '{user_id_numeric_for_comparison}'") # Có thể bỏ comment để debug
 
             # Tạo một cột tạm thời 'ExtractedUserID' bằng cách cắt chuỗi 'UserID' tại dấu '_'
             # và chuyển nó thành chữ hoa để so sánh.
             df_attendance['ExtractedUserID'] = df_attendance['UserID'].apply(lambda x: x.split('_')[0]).str.upper()
-            # print(f"DEBUG: UserIDs extracted from attendance data (normalized): {df_attendance['ExtractedUserID'].unique()}") # Có thể bỏ comment để debug
 
             # Lọc DataFrame dựa trên cột 'ExtractedUserID' mới tạo này
             df_user_detailed_attendance = df_attendance[df_attendance['ExtractedUserID'] == user_id_numeric_for_comparison]
         else:
             df_user_detailed_attendance = pd.DataFrame() 
-
-        # print(f"DEBUG: Filtered attendance for UserID '{user_id_from_tree}'. Rows found: {df_user_detailed_attendance.shape[0]}") # Có thể bỏ comment để debug
 
         if df_user_detailed_attendance.empty:
             messagebox.showinfo("Thông báo", f"Không có dữ liệu chấm công chi tiết nào cho người dùng '{user_name}' (ID: {user_id_from_tree}).")
@@ -711,10 +794,6 @@ class AdminFunctions:
         chart_container_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
         ttk.Label(chart_container_frame, text="Biểu đồ Chấm công", font=("Arial", 14, "bold")).pack(pady=5)
 
-        # Sử dụng df_user_detailed_attendance đã được truyền vào
-        # print(f"DEBUG: df_user_detailed_attendance in display func head:\n{df_user_detailed_attendance.head()}") # Có thể bỏ comment để debug
-        # print(f"DEBUG: df_user_detailed_attendance in display func shape: {df_user_detailed_attendance.shape}") # Có thể bỏ comment để debug
-
         # Tính toán các chỉ số cần thiết cho biểu đồ
         metrics = self._calculate_attendance_metrics(df_user_detailed_attendance)
 
@@ -768,11 +847,7 @@ class AdminFunctions:
 
     def _on_user_tree_select(self, event):
         # Phương thức này được gọi mỗi khi có sự thay đổi lựa chọn trong Treeview
-        # Bạn có thể thêm code debug ở đây nếu muốn xem sự kiện có kích hoạt hay không
-        # Ví dụ:
-        # selected_items = self.user_tree.selection()
-        # print(f"DEBUG: Selection event triggered. Current selection: {selected_items}")
-        pass # Hiện tại không cần làm gì cụ thể ở đây, chỉ cần đảm bảo sự kiện được xử lý 
+        pass 
 
 
     def _calculate_attendance_metrics(self, df_user_attendance):
@@ -811,7 +886,7 @@ class AdminFunctions:
         check_in_records = df_temp[
             (df_temp['CheckType'] == 'Check-in') & 
             (df_temp['CheckInTime'].notna())
-        ].copy() # Đã sửa lỗi thụt lề và vị trí dấu chấm
+        ].copy() 
 
         if not check_in_records.empty:
             late_check_ins_records = check_in_records[
@@ -819,6 +894,6 @@ class AdminFunctions:
             ]
             metrics['late_check_in_count_by_day'] = late_check_ins_records.groupby(late_check_ins_records['Timestamp'].dt.date).size()
         else:
-            metrics['late_check_in_count_by_day'] = pd.Series(dtype=int) # Đã sửa lỗi thụt lề
+            metrics['late_check_in_count_by_day'] = pd.Series(dtype=int) 
 
         return metrics
