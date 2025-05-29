@@ -6,7 +6,7 @@ import cv2
 import os
 import shutil
 import pandas as pd
-from datetime import datetime
+import datetime
 from PIL import Image, ImageTk # <<< THÊM DÒNG NÀY ĐỂ XỬ LÝ ẢNH
 
 import config
@@ -18,6 +18,10 @@ from database.database_manager import (
     load_attendance, save_attendance, summarize_checkin_checkout,
     update_user_name_in_attendance # <<< ĐẢM BẢO DÒNG NÀY CÓ Ở ĐÂY
 )
+
+import matplotlib.pyplot as plt # <<< THÊM DÒNG NÀY
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk # <<< THÊM DÒNG NÀY
+
 from report_window import ReportWindow 
 
 class AdminFunctions:
@@ -603,7 +607,7 @@ class AdminFunctions:
 
     def _view_user_report(self):
         selected_item = self.user_tree.selection()
-        print(f"DEBUG: selected_item = {selected_item}")
+        # print(f"DEBUG: selected_item = {selected_item}") # Có thể bỏ comment để debug
 
         if not selected_item:
             messagebox.showwarning("Cảnh báo", "Vui lòng chọn một người dùng để xem báo cáo.")
@@ -613,103 +617,153 @@ class AdminFunctions:
         user_id_from_tree = values[0].strip() # Lấy ID từ Treeview và loại bỏ khoảng trắng
         user_name = values[1]
 
-        print(f"DEBUG: User selected from Treeview: ID='{user_id_from_tree}', Name='{user_name}'")
+        # print(f"DEBUG: User selected from Treeview: ID='{user_id_from_tree}', Name='{user_name}'") # Có thể bỏ comment để debug
 
         df_attendance = load_attendance() # Tải toàn bộ dữ liệu chấm công
 
         if not df_attendance.empty:
             df_attendance['UserID'] = df_attendance['UserID'].astype(str) # Đảm bảo cột 'UserID' là kiểu chuỗi
-            print(f"DEBUG: Loaded attendance data. Columns: {df_attendance.columns}")
-            print(f"DEBUG: Unique UserIDs in loaded attendance data (original): {df_attendance['UserID'].unique()}")
+            # print(f"DEBUG: Loaded attendance data. Columns: {df_attendance.columns}") # Có thể bỏ comment để debug
+            # print(f"DEBUG: Unique UserIDs in loaded attendance data (original): {df_attendance['UserID'].unique()}") # Có thể bỏ comment để debug
 
-            # Chuẩn hóa ID từ Treeview thành chữ hoa
-            user_id_for_comparison = user_id_from_tree.upper() 
-            print(f"DEBUG: User ID from Treeview (normalized for comparison): '{user_id_for_comparison}'")
+            # Lấy UserID từ Treeview. UserID trong Treeview có dạng "ID_Name" (e.g., SS2_HoSang)
+            # Chúng ta cần lấy phần ID số để so sánh với UserID_Extracted trong df_attendance.
+            user_id_numeric_for_comparison = user_id_from_tree.split('_')[0].strip().upper()
+            # print(f"DEBUG: User ID from Treeview (numeric for comparison): '{user_id_numeric_for_comparison}'") # Có thể bỏ comment để debug
 
-            # --- ĐÂY LÀ PHẦN SỬA ĐỂ LỌC ĐÚNG ---
             # Tạo một cột tạm thời 'ExtractedUserID' bằng cách cắt chuỗi 'UserID' tại dấu '_'
             # và chuyển nó thành chữ hoa để so sánh.
             df_attendance['ExtractedUserID'] = df_attendance['UserID'].apply(lambda x: x.split('_')[0]).str.upper()
-            print(f"DEBUG: UserIDs extracted from attendance data (normalized): {df_attendance['ExtractedUserID'].unique()}")
+            # print(f"DEBUG: UserIDs extracted from attendance data (normalized): {df_attendance['ExtractedUserID'].unique()}") # Có thể bỏ comment để debug
 
             # Lọc DataFrame dựa trên cột 'ExtractedUserID' mới tạo này
-            df_user_attendance = df_attendance[df_attendance['ExtractedUserID'] == user_id_for_comparison]
-            # --- KẾT THÚC PHẦN SỬA ---
+            df_user_detailed_attendance = df_attendance[df_attendance['ExtractedUserID'] == user_id_numeric_for_comparison]
         else:
-            df_user_attendance = pd.DataFrame() 
+            df_user_detailed_attendance = pd.DataFrame() 
 
-        print(f"DEBUG: Filtered attendance for UserID '{user_id_from_tree}'. Rows found: {df_user_attendance.shape[0]}")
+        # print(f"DEBUG: Filtered attendance for UserID '{user_id_from_tree}'. Rows found: {df_user_detailed_attendance.shape[0]}") # Có thể bỏ comment để debug
 
-        if df_user_attendance.empty:
-            messagebox.showinfo("Thông báo", f"Không có dữ liệu chấm công nào cho người dùng '{user_name}' (ID: {user_id_from_tree}).")
+        if df_user_detailed_attendance.empty:
+            messagebox.showinfo("Thông báo", f"Không có dữ liệu chấm công chi tiết nào cho người dùng '{user_name}' (ID: {user_id_from_tree}).")
             return
 
-        # 3. Sử dụng hàm summarize_checkin_checkout để tạo báo cáo tổng hợp cho người dùng này
-        # Hàm này đã được thiết kế để nhận một DataFrame, nên chúng ta chỉ cần truyền DataFrame đã lọc.
-        df_user_summary = summarize_checkin_checkout(df_user_attendance)
-
+        # Sử dụng hàm summarize_checkin_checkout để tạo báo cáo tổng hợp cho người dùng này
+        df_user_summary = summarize_checkin_checkout(df_user_detailed_attendance.copy()) # Truyền bản sao để tránh cảnh báo
 
         if df_user_summary.empty:
-            messagebox.showinfo("Thông báo", f"Không có dữ liệu báo cáo tổng hợp cho người dùng '{user_name}' (ID: {user_id}).")
+            messagebox.showinfo("Thông báo", f"Không có dữ liệu báo cáo tổng hợp cho người dùng '{user_name}' (ID: {user_id_from_tree}).")
             return
 
-        # 4. Hiển thị báo cáo trong một cửa sổ mới
-        self._display_single_user_report_window(user_name, df_user_summary)
+        # Hiển thị báo cáo trong một cửa sổ mới
+        # TRUYỀN THÊM df_user_detailed_attendance (dữ liệu chi tiết đã lọc)
+        self._display_single_user_report_window(user_name, df_user_summary, df_user_detailed_attendance)
 
-    def _display_single_user_report_window(self, user_name, df_summary):
-        report_dialog = tk.Toplevel(self.master_root)
-        report_dialog.title(f"Báo cáo của: {user_name}")
-        report_dialog.geometry("750x350") # Điều chỉnh kích thước cửa sổ
-        report_dialog.transient(self.master_root)
-        report_dialog.grab_set()
+    def _display_single_user_report_window(self, user_name, df_summary, df_user_detailed_attendance):
+        report_window = tk.Toplevel(self.master_root)
+        report_window.title(f"Báo cáo Chấm công của {user_name}")
+        report_window.geometry("1400x700") # Kích thước lớn hơn để chứa biểu đồ
+        report_window.transient(self.master_root)
+        report_window.grab_set()
 
-        tree_frame = ttk.Frame(report_dialog)
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Tạo một khung chính để chia thành 2 phần: Bảng và Biểu đồ
+        main_frame = ttk.Frame(report_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Tạo Treeview với các cột từ DataFrame báo cáo
-        # Đảm bảo các cột này khớp với các cột mà summarize_checkin_checkout trả về
+        # Phần bên trái: Bảng báo cáo tổng hợp
+        report_table_frame = ttk.Frame(main_frame)
+        report_table_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        ttk.Label(report_table_frame, text=f"Báo cáo Tổng hợp cho: {user_name}", font=("Arial", 14, "bold")).pack(pady=5)
+
         columns = df_summary.columns.tolist()
-        tree = ttk.Treeview(tree_frame, columns=columns, show='headings')
+        tree = ttk.Treeview(report_table_frame, columns=columns, show="headings")
 
-        # Định nghĩa tiêu đề cho các cột (hiển thị tiếng Việt)
+        # Định nghĩa tiêu đề cột và độ rộng
         headings_map = {
             'UserID': 'Mã NV',
             'Name': 'Tên',
             'TotalCheckIn': 'Tổng Check-in',
             'TotalCheckOut': 'Tổng Check-out',
-            'AvgWorkDuration': 'TG làm việc TB', # Thời gian làm việc trung bình
+            'AvgWorkDuration': 'TG làm việc TB',
             'Status': 'Trạng thái'
         }
-
         for col in columns:
-            tree.heading(col, text=headings_map.get(col, col)) # Sử dụng ánh xạ hoặc tên cột gốc nếu không tìm thấy
-
-            # Điều chỉnh độ rộng cột cho phù hợp
+            tree.heading(col, text=headings_map.get(col, col))
             if col == 'UserID': tree.column(col, width=100, anchor=tk.CENTER)
             elif col == 'Name': tree.column(col, width=120, anchor=tk.W)
             elif col == 'TotalCheckIn' or col == 'TotalCheckOut': tree.column(col, width=90, anchor=tk.CENTER)
             elif col == 'AvgWorkDuration': tree.column(col, width=120, anchor=tk.CENTER)
             elif col == 'Status': tree.column(col, width=180, anchor=tk.W)
-            else: tree.column(col, width=80, anchor=tk.W) # Các cột khác nếu có
+            else: tree.column(col, width=80, anchor=tk.W)
 
-        # Đổ dữ liệu từ DataFrame vào Treeview
+        # Đổ dữ liệu vào Treeview
         for index, row in df_summary.iterrows():
             tree.insert("", tk.END, values=row.tolist())
+        
+        tree.pack(fill=tk.BOTH, expand=True)
 
-        # Thêm thanh cuộn (scrollbar)
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
-        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        # Nút đóng cho cửa sổ báo cáo này
+        ttk.Button(report_table_frame, text="Đóng", command=report_window.destroy).pack(pady=10)
 
-        tree.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
 
-        tree_frame.grid_rowconfigure(0, weight=1)
-        tree_frame.grid_columnconfigure(0, weight=1)
+        # --- PHẦN BỔ SUNG: BIỂU ĐỒ ---
+        chart_container_frame = ttk.Frame(main_frame)
+        chart_container_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        ttk.Label(chart_container_frame, text="Biểu đồ Chấm công", font=("Arial", 14, "bold")).pack(pady=5)
 
-        # Nút đóng cửa sổ báo cáo
-        ttk.Button(report_dialog, text="Đóng", command=report_dialog.destroy).pack(pady=10)   
+        # Sử dụng df_user_detailed_attendance đã được truyền vào
+        # print(f"DEBUG: df_user_detailed_attendance in display func head:\n{df_user_detailed_attendance.head()}") # Có thể bỏ comment để debug
+        # print(f"DEBUG: df_user_detailed_attendance in display func shape: {df_user_detailed_attendance.shape}") # Có thể bỏ comment để debug
+
+        # Tính toán các chỉ số cần thiết cho biểu đồ
+        metrics = self._calculate_attendance_metrics(df_user_detailed_attendance)
+
+        # --- BIỂU ĐỒ 1: TỔNG GIỜ LÀM VIỆC MỖI NGÀY ---
+        if not metrics['daily_work_hours'].empty:
+            fig1, ax1 = plt.subplots(figsize=(6, 3)) # Kích thước biểu đồ
+            metrics['daily_work_hours'].plot(kind='bar', ax=ax1, color='skyblue')
+            ax1.set_title('Tổng giờ làm việc mỗi ngày', fontsize=10)
+            ax1.set_xlabel('Ngày', fontsize=8)
+            ax1.set_ylabel('Tổng giờ (giờ)', fontsize=8)
+            ax1.tick_params(axis='x', rotation=45, labelsize=7)
+            ax1.tick_params(axis='y', labelsize=7)
+            plt.tight_layout() # Đảm bảo bố cục gọn gàng
+
+            canvas1 = FigureCanvasTkAgg(fig1, master=chart_container_frame)
+            canvas_widget1 = canvas1.get_tk_widget()
+            canvas_widget1.pack(fill=tk.BOTH, expand=True, pady=5)
+            # Thêm thanh công cụ Matplotlib
+            toolbar1 = NavigationToolbar2Tk(canvas1, chart_container_frame)
+            toolbar1.update()
+            canvas_widget1.pack(pady=2) # Điều chỉnh khoảng cách
+
+
+        else:
+            ttk.Label(chart_container_frame, text="Không có dữ liệu giờ làm việc để hiển thị biểu đồ.").pack(pady=10)
+
+
+        # --- BIỂU ĐỒ 2: SỐ LẦN ĐI MUỘN THEO NGÀY ---
+        if not metrics['late_check_in_count_by_day'].empty:
+            fig2, ax2 = plt.subplots(figsize=(6, 3))
+            metrics['late_check_in_count_by_day'].plot(kind='bar', ax=ax2, color='salmon')
+            ax2.set_title('Số lần đi muộn mỗi ngày', fontsize=10)
+            ax2.set_xlabel('Ngày', fontsize=8)
+            ax2.set_ylabel('Số lần', fontsize=8)
+            ax2.tick_params(axis='x', rotation=45, labelsize=7)
+            ax2.tick_params(axis='y', labelsize=7)
+            plt.tight_layout()
+
+            canvas2 = FigureCanvasTkAgg(fig2, master=chart_container_frame)
+            canvas_widget2 = canvas2.get_tk_widget()
+            canvas_widget2.pack(fill=tk.BOTH, expand=True, pady=5)
+            toolbar2 = NavigationToolbar2Tk(canvas2, chart_container_frame)
+            toolbar2.update()
+            canvas_widget2.pack(pady=2) # Điều chỉnh khoảng cách
+        else:
+            ttk.Label(chart_container_frame, text="Không có dữ liệu đi muộn để hiển thị biểu đồ.").pack(pady=10)
+
+        
+               
 
 
     def _on_user_tree_select(self, event):
@@ -719,3 +773,52 @@ class AdminFunctions:
         # selected_items = self.user_tree.selection()
         # print(f"DEBUG: Selection event triggered. Current selection: {selected_items}")
         pass # Hiện tại không cần làm gì cụ thể ở đây, chỉ cần đảm bảo sự kiện được xử lý 
+
+
+    def _calculate_attendance_metrics(self, df_user_attendance):
+        """Tính toán các chỉ số chấm công cần thiết cho biểu đồ."""
+        metrics = {}
+
+        df_temp = df_user_attendance.copy() 
+
+        # Chuyển đổi các cột liên quan sang kiểu datetime object
+        df_temp['Timestamp'] = pd.to_datetime(df_temp['Timestamp'], errors='coerce')
+        df_temp['CheckInTime'] = pd.to_datetime(df_temp['CheckInTime'], errors='coerce')
+        df_temp['CheckOutTime'] = pd.to_datetime(df_temp['CheckOutTime'], errors='coerce')
+
+        # Gỡ bỏ các dòng mà việc chuyển đổi datetime bị lỗi (NaT) cho các cột thiết yếu
+        df_temp.dropna(subset=['Timestamp', 'CheckInTime', 'CheckOutTime'], inplace=True)
+
+    # --- 1. Tổng giờ làm việc hàng ngày ---
+        completed_shifts = df_temp[
+            (df_temp['CheckType'] == 'Check-in') & 
+            (df_temp['CheckInTime'].notna()) & 
+            (df_temp['CheckOutTime'].notna())
+        ].copy() 
+
+        if not completed_shifts.empty:
+            completed_shifts['WorkDuration'] = completed_shifts['CheckOutTime'] - completed_shifts['CheckInTime']
+            completed_shifts['WorkDuration_minutes'] = completed_shifts['WorkDuration'].dt.total_seconds() / 60
+
+            daily_work_hours = completed_shifts.groupby(completed_shifts['Timestamp'].dt.date)['WorkDuration_minutes'].sum() / 60
+            metrics['daily_work_hours'] = daily_work_hours
+        else:
+            metrics['daily_work_hours'] = pd.Series(dtype=float) 
+
+    # --- 2. Số lần đi muộn theo ngày (ví dụ: nếu check-in sau 8:00 AM) ---
+        start_work_time_threshold = datetime.time(8, 0, 0) # Ví dụ: 8:00 AM
+
+        check_in_records = df_temp[
+            (df_temp['CheckType'] == 'Check-in') & 
+            (df_temp['CheckInTime'].notna())
+        ].copy() # Đã sửa lỗi thụt lề và vị trí dấu chấm
+
+        if not check_in_records.empty:
+            late_check_ins_records = check_in_records[
+                check_in_records['CheckInTime'].dt.time > start_work_time_threshold
+            ]
+            metrics['late_check_in_count_by_day'] = late_check_ins_records.groupby(late_check_ins_records['Timestamp'].dt.date).size()
+        else:
+            metrics['late_check_in_count_by_day'] = pd.Series(dtype=int) # Đã sửa lỗi thụt lề
+
+        return metrics
