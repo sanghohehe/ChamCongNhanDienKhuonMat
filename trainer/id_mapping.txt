@@ -1,2 +1,1 @@
-1:1
-2:sang
+0:SS1_SangHo

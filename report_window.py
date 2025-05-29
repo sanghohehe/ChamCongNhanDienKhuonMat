@@ -1,85 +1,137 @@
-# report_window.py
 import tkinter as tk
-from tkinter import ttk, messagebox
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import matplotlib.pyplot as plt
+from tkinter import ttk, messagebox, filedialog
 import pandas as pd
 from datetime import datetime
+import os
+
+# Import các hàm từ database_manager
+from database.database_manager import load_attendance, summarize_checkin_checkout
 
 class ReportWindow:
-    def __init__(self, root):
-        self.root = tk.Toplevel(root)
-        self.root.title("Thống kê - Báo cáo")
-        self.create_widgets()
+    def __init__(self, master):
+        self.master = master
+        self.report_window = tk.Toplevel(master)
+        self.report_window.title("Báo cáo Chấm công Tổng hợp")
+        self.report_window.geometry("1000x700")
 
-    def create_widgets(self):
-        frame = ttk.Frame(self.root)
-        frame.pack(padx=10, pady=10)
+        self.report_window.grab_set() # Chặn tương tác với cửa sổ chính
+        self.report_window.transient(master) # Đặt cửa sổ chính là cha
 
-        ttk.Label(frame, text="Chọn tháng (YYYY-MM):").grid(row=0, column=0, sticky=tk.W)
-        self.month_entry = ttk.Entry(frame)
-        self.month_entry.grid(row=0, column=1)
+        # Khung chứa Treeview và Scrollbar
+        tree_frame = ttk.Frame(self.report_window, padding="10")
+        tree_frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Button(frame, text="Xem Thống Kê", command=self.show_report).grid(row=0, column=2, padx=10)
+        self.report_tree = ttk.Treeview(tree_frame)
+        self.report_tree.pack(fill=tk.BOTH, expand=True)
 
-        self.chart_frame = ttk.Frame(self.root)
-        self.chart_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        # Cấu hình Treeview
+        cols = ('ID', 'Name', 'TotalCheckIn', 'TotalCheckOut', 'AvgWorkDuration', 'Status')
+        self.report_tree['columns'] = cols
+        self.report_tree.column("#0", width=0, stretch=tk.NO)
+        self.report_tree.column("ID", anchor=tk.CENTER, width=80)
+        self.report_tree.column("Name", anchor=tk.W, width=150)
+        self.report_tree.column("TotalCheckIn", anchor=tk.CENTER, width=100)
+        self.report_tree.column("TotalCheckOut", anchor=tk.CENTER, width=100)
+        self.report_tree.column("AvgWorkDuration", anchor=tk.CENTER, width=150)
+        self.report_tree.column("Status", anchor=tk.W, width=200)
 
-    def show_report(self):
-      month = self.month_entry.get()
-      try:
-        df = pd.read_csv("data/attendance.csv")
-        df['Date'] = pd.to_datetime(df['Date'])
-        df['CheckIn'] = pd.to_datetime(df['CheckIn'])
-        df['CheckOut'] = pd.to_datetime(df['CheckOut'])
-        df['WorkedHours'] = (df['CheckOut'] - df['CheckIn']).dt.total_seconds() / 3600
+        self.report_tree.heading("#0", text="")
+        self.report_tree.heading("ID", text="Mã NV")
+        self.report_tree.heading("Name", text="Tên")
+        self.report_tree.heading("TotalCheckIn", text="Tổng Check-in")
+        self.report_tree.heading("TotalCheckOut", text="Tổng Check-out")
+        self.report_tree.heading("AvgWorkDuration", text="TG làm việc TB")
+        self.report_tree.heading("Status", text="Trạng thái")
 
-        if month:
-            df = df[df['Date'].dt.strftime('%Y-%m') == month]
+        # Scrollbar cho Treeview
+        scrollbar_y = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.report_tree.yview)
+        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+        self.report_tree.configure(yscrollcommand=scrollbar_y.set)
 
-        if df.empty:
-            messagebox.showinfo("Thông báo", "Không có dữ liệu cho tháng này.")
+        scrollbar_x = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.report_tree.xview)
+        scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+        self.report_tree.configure(xscrollcommand=scrollbar_x.set)
+
+        # Nút xuất Excel
+        export_button_frame = ttk.Frame(self.report_window, padding="10")
+        export_button_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
+        ttk.Button(export_button_frame, text="Xuất báo cáo Excel", command=self._export_report_to_excel).pack(pady=5)
+        
+        # ✅ Tự động tạo báo cáo khi cửa sổ mở
+        self._generate_report()
+
+    def _generate_report(self):
+        """Tạo báo cáo tổng hợp từ toàn bộ dữ liệu chấm công."""
+        for i in self.report_tree.get_children():
+            self.report_tree.delete(i) # Xóa dữ liệu cũ
+
+        df_attendance = load_attendance()
+        if df_attendance.empty:
+            messagebox.showinfo("Thông báo", "Không có dữ liệu chấm công để tạo báo cáo.")
             return
 
-        hours_per_day = df.groupby(df['Date'].dt.date)['WorkedHours'].sum()
-        late_count = sum(df['CheckIn'].dt.time > datetime.strptime("08:00", "%H:%M").time())
-        early_leave_count = sum(df['CheckOut'].dt.time < datetime.strptime("17:00", "%H:%M").time())
+        # Gọi hàm summarize_checkin_checkout từ database_manager
+        # Giả định summarize_checkin_checkout đã được sửa để hoạt động với toàn bộ df
+        df_summary = summarize_checkin_checkout(df_attendance)
 
-        self.plot_charts(hours_per_day, late_count, early_leave_count)
+        if df_summary.empty:
+            messagebox.showinfo("Thông báo", "Không có dữ liệu tổng hợp sau khi xử lý.")
+            return
 
-        # 👇 Thêm đoạn này để liệt kê ai đi muộn / về sớm
-        late_users = df[df['CheckIn'].dt.time > datetime.strptime("08:00", "%H:%M").time()]
-        early_users = df[df['CheckOut'].dt.time < datetime.strptime("17:00", "%H:%M").time()]
+        for index, row in df_summary.iterrows():
+            avg_duration_str = str(row['AvgWorkDuration']).split(' days')[-1].strip() if pd.notna(row['AvgWorkDuration']) else '-'
+            
+            self.report_tree.insert("", "end", values=(
+                row['UserID'],
+                row['Name'],
+                row['TotalCheckIn'],
+                row['TotalCheckOut'],
+                avg_duration_str,
+                row['Status']
+            ))
+        messagebox.showinfo("Báo cáo", f"Đã tạo báo cáo tổng hợp cho {len(df_summary)} người dùng.")
 
-        late_list = late_users['Name'].tolist() if 'Name' in df.columns else []
-        early_list = early_users['Name'].tolist() if 'Name' in df.columns else []
+    def _export_report_to_excel(self):
+        """Xuất báo cáo hiện tại ra file Excel."""
+        df_attendance = load_attendance()
+        if df_attendance.empty:
+            messagebox.showwarning("Cảnh báo", "Không có dữ liệu để xuất.")
+            return
+        
+        df_summary = summarize_checkin_checkout(df_attendance)
 
-        info = "📌 Danh sách đi muộn:\n"
-        info += '\n'.join(late_list) if late_list else "✅ Không ai đi muộn."
-        info += "\n\n📌 Danh sách về sớm:\n"
-        info += '\n'.join(early_list) if early_list else "✅ Không ai về sớm."
+        if df_summary.empty:
+            messagebox.showwarning("Cảnh báo", "Không có dữ liệu tổng hợp để xuất.")
+            return
 
-        messagebox.showinfo("Chi tiết đi muộn / về sớm", info)
+        # Làm sạch cột thời gian để xuất Excel dễ hơn
+        df_summary_export = df_summary.copy()
+        df_summary_export['AvgWorkDuration'] = df_summary_export['AvgWorkDuration'].apply(
+            lambda x: str(x).split(' days')[-1].strip() if pd.notna(x) else '-'
+        )
 
-      except Exception as e:
-        messagebox.showerror("Lỗi", f"Không thể xử lý dữ liệu: {e}")
+        df_summary_export = df_summary_export.rename(columns={
+            'UserID': 'Mã Nhân Viên',
+            'Name': 'Tên Nhân Viên',
+            'TotalCheckIn': 'Tổng số lần Check-in',
+            'TotalCheckOut': 'Tổng số lần Check-out',
+            'AvgWorkDuration': 'Thời gian làm việc trung bình',
+            'Status': 'Trạng thái chung' # Ví dụ: "Đi làm đầy đủ", "Thường xuyên đi muộn", v.v.
+        })
+        
+        cols_to_export = ['Mã Nhân Viên', 'Tên Nhân Viên', 'Tổng số lần Check-in', 
+                          'Tổng số lần Check-out', 'Thời gian làm việc trung bình', 'Trạng thái chung']
+        df_final_export = df_summary_export[cols_to_export]
 
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            title="Lưu báo cáo tổng hợp chấm công"
+        )
 
-    def plot_charts(self, hours_per_day, late_count, early_leave_count):
-        for widget in self.chart_frame.winfo_children():
-            widget.destroy()
-
-        fig, axs = plt.subplots(1, 2, figsize=(10, 4))
-
-        axs[0].bar(hours_per_day.index.astype(str), hours_per_day.values, color='skyblue')
-        axs[0].set_title("Tổng giờ làm theo ngày")
-        axs[0].tick_params(axis='x', rotation=45)
-        axs[0].set_ylabel("Giờ")
-
-        axs[1].bar(['Đi muộn', 'Về sớm'], [late_count, early_leave_count], color=['orange', 'red'])
-        axs[1].set_title("Số lần đi muộn / về sớm")
-
-        fig.tight_layout()
-        canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        if file_path:
+            try:
+                df_final_export.to_excel(file_path, index=False)
+                messagebox.showinfo("Thành công", f"Đã xuất báo cáo thành công tại:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể xuất báo cáo ra Excel: {str(e)}")
